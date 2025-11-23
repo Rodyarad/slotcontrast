@@ -6,6 +6,7 @@ import random
 import warnings
 from typing import Any, Dict, Optional
 
+import comet_ml
 import pytorch_lightning as pl
 import torch
 from omegaconf import OmegaConf
@@ -62,8 +63,10 @@ def _setup_callbacks(args, config, log_path: pathlib.Path, dataset=None) -> Dict
         # Explicitly construct model checkpoint to have control over checkpoints directory
         checkpointer = pl.callbacks.ModelCheckpoint(
             log_path / CHECKPOINT_SUBDIR,
-            filename="{step}",
-            every_n_train_steps=config.checkpoint_every_n_steps,
+            filename="best-checkpoint_{step}",
+            monitor="val/loss",
+            save_top_k=1,
+            save_last=True,
             verbose=args.verbose,
         )
         callbacks["checkpointer"] = checkpointer
@@ -84,7 +87,7 @@ def _setup_callbacks(args, config, log_path: pathlib.Path, dataset=None) -> Dict
     return callbacks
 
 
-def _setup_loggers(args, log_path: pathlib.Path) -> Dict[str, pl.loggers.logger.Logger]:
+def _setup_loggers(args, log_path: pathlib.Path, config) -> Dict[str, pl.loggers.logger.Logger]:
     if args.dry:
         return {}
 
@@ -94,6 +97,13 @@ def _setup_loggers(args, log_path: pathlib.Path) -> Dict[str, pl.loggers.logger.
         loggers["tensorboard"] = pl.loggers.TensorBoardLogger(
             save_dir=log_path, name=TENSORBOARD_SUBDIR, version=""
         )
+
+    if 'comet' in config and config.comet is not None and config.comet.project is not None:
+        mode = 'create' if config.comet.run_id is None else 'get'
+        loggers['comet'] = pl.loggers.CometLogger(project_name=config.comet.project,
+                                                  experiment_name=config.comet.run_name,
+                                                  experiment_key=config.comet.run_id, mode=mode)
+        loggers['comet'].experiment.log_parameters(OmegaConf.to_container(config, resolve=True))
 
     # CSV logs go to <log_dir>/<metrics_subdir>/version_N/metrics.csv, where N is the number of
     # restarts of the job
@@ -129,6 +139,10 @@ def _setup_trainer_config(trainer_config: Dict[str, Any]) -> Dict[str, Any]:
     # Let Pytorch Lightning select the device if not specified otherwise.
     if "accelerator" not in trainer_config:
         trainer_config["accelerator"] = "auto"
+
+    if "accumulate_grad_batches" not in trainer_config:
+        trainer_config["accumulate_grad_batches"] = 1
+        log_info(f"Setting accumulate_grad_batches to {trainer_config['accumulate_grad_batches']} by default")
 
     # Automatically select DDP as strategy if possible and not specified otherwise.
     if (
@@ -238,7 +252,7 @@ def main(args, config_overrides=None):
     model = models.build(config.model, config.optimizer, train_metrics, val_metrics)
 
     callbacks = _setup_callbacks(args, config, log_path, dataset)
-    loggers = _setup_loggers(args, log_path)
+    loggers = _setup_loggers(args, log_path, config)
     trainer_config = _setup_trainer_config(config.setdefault("trainer", {}))
 
     # Save the final configuration

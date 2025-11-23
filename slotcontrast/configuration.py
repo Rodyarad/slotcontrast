@@ -1,7 +1,7 @@
 import pathlib
 from dataclasses import MISSING, dataclass, field
 from functools import reduce
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from omegaconf import OmegaConf
 
@@ -19,12 +19,13 @@ class ModelConfig:
     target_encoder: Optional[ModuleConfig] = None
     latent_processor: Optional[ModuleConfig] = None
     mask_resizers: Optional[Dict[str, ModuleConfig]] = None
-    losses: Optional[Dict[str, ModuleConfig]] = None
-    loss_weights: Optional[Dict[str, float]] = None
+    losses: Optional[Dict[str, Optional[ModuleConfig]]] = None
+    loss_weights: Optional[Dict[str, Optional[float]]] = None
     input_type: str = "image"
     target_type: str = "features"
     target_encoder_input: Optional[str] = None
     visualize: bool = False
+    visualization_size: Optional[Tuple[int, int]] = None
     eval_mode_config: Optional[Dict[str, Any]] = None
     visualize_every_n_steps: Optional[int] = 1000
     masks_to_visualize: Optional[List[str]] = None
@@ -37,6 +38,7 @@ class Config:
     optimizer: ModuleConfig = MISSING
     model: ModelConfig = MISSING
     dataset: ModuleConfig = MISSING
+    comet: Optional[ModuleConfig] = None
     trainer: Optional[ModuleConfig] = field(default_factory=lambda: {})
     train_metrics: Optional[Dict[str, ModuleConfig]] = None
     val_metrics: Optional[Dict[str, ModuleConfig]] = None
