@@ -52,7 +52,6 @@ requests==2.32.3
 ruff==0.0.292
 safetensors==0.5.2
 scipy==1.15.1
--e git+https://github.com/Rodyarad/slotcontrast.git@55ec66dc02eeade630805789ef4a6c5df06f21ff#egg=SlotContrast
 tensorboardX==2.6.4
 timm==0.9.16
 tomli==2.2.1
