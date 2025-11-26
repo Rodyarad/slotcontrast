@@ -65,3 +65,6 @@ urllib3==2.3.0
 virtualenv==20.28.1
 webdataset==0.2.100
 yarl==1.18.3
+matplotlob
+scikit-image
+comet_ml

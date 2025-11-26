@@ -1,8 +1,8 @@
 experiment_group: slotcontrast
-experiment_name: block_lifting
+experiment_name: pick-specific
 
 globals:
-  NUM_SLOTS: 8
+  NUM_SLOTS: 7
   SLOT_DIM: 64
   DINO_MODEL: vit_small_patch14_dinov2
   FEAT_DIM: 384
@@ -31,7 +31,7 @@ model:
   visualize: true
   visualize_every_n_steps: 99999999999
   visualization_size: [128, 128]
-  masks_to_visualize: [decoder_masks,decoder_masks_vis_hard,grouping_masks,grouping_masks_vis_hard]
+  masks_to_visualize: [decoder_masks,decoder_masks_vis_hard,grouping_masks,grouping_masks_vis_hard,image_decoder_masks,image_decoder_masks_vis_hard]
   losses:
     loss_featrec:
       name: MSELoss
@@ -45,10 +45,18 @@ model:
       batch_contrast: true
       patch_inputs: false
       keep_input_dim: true
+    loss_image_reconstruction:
+      name: MSELoss
+      pred_key: image_decoder.reconstruction
+      target_key: image_decoder.source
+      video_inputs: true
+      patch_inputs: false
+      keep_input_dim: true
 
   loss_weights:
     loss_featrec: 1.0
     loss_ss: 0.5
+    loss_image_reconstruction: 1.0
 
   initializer:
     name: FixedLearnedInit
@@ -91,6 +99,13 @@ model:
     hidden_dims: [1024, 1024, 1024]
     n_patches: ${globals.NUM_PATCHES}
 
+  image_decoder:
+    name: SpatialBroadcastDecoderV2
+    inp_dim: ${globals.SLOT_DIM}
+    outp_dim: 3
+    hidden_size: 128
+    image_size: 128
+
   predictor:
     name: networks.TransformerEncoder
     dim: ${globals.SLOT_DIM}
@@ -100,7 +115,7 @@ model:
 dataset:
   name: EpisodesDataModule
   root: null
-  extension: png
+  extension: JPEG
   sequence_length: 8
   train_batch_size: ${globals.BATCH_SIZE_PER_GPU}
   val_batch_size: 16

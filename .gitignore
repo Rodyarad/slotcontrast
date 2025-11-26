@@ -166,3 +166,5 @@ logs/
 lightning_logs/
 
 .idea/
+
+test.sh
