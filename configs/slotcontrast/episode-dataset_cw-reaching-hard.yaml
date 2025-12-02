@@ -4,9 +4,9 @@ experiment_name: cw-reaching-hard
 globals:
   NUM_SLOTS: 10
   SLOT_DIM: 128
-  DINO_MODEL: vit_small_patch14_dinov2
+  DINO_MODEL: vit_small_patch16_dinov3 #vit_small_patch16_dinov2
   FEAT_DIM: 384
-  NUM_PATCHES: 576
+  NUM_PATCHES: 441 #576
   NUM_GPUS: 1
   BATCH_SIZE_PER_GPU: 64
   TOTAL_BATCH_SIZE: "${mul: ${.NUM_GPUS}, ${.BATCH_SIZE_PER_GPU}}"

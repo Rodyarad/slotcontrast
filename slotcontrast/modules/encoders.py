@@ -113,6 +113,44 @@ class TimmExtractor(nn.Module):
         "norm": "vit_output",
     }
 
+    class _ViTHookFeatureExtractor(nn.Module):
+        """Simple hook-based feature extractor for ViT models.
+
+        This is used as a fallback for models where the torchvision FX-based
+        feature extractor causes device mismatch issues (e.g. some DINOv3
+        variants). It mirrors the behaviour of `create_feature_extractor`
+        for the specific nodes we care about by attaching forward hooks.
+        """
+
+        def __init__(self, model: nn.Module, feature_nodes: List[str]):
+            super().__init__()
+            self.model = model
+            self.feature_nodes = feature_nodes
+            self._features: Dict[str, torch.Tensor] = {}
+
+            module_dict = dict(self.model.named_modules())
+
+            missing = [name for name in feature_nodes if name not in module_dict]
+            if missing:
+                raise ValueError(
+                    f"Requested feature nodes {missing}, but they do not exist in the "
+                    f"ViT model. Available nodes include: {list(module_dict.keys())}"
+                )
+
+            def make_hook(name: str):
+                def hook(_module, _inp, output):
+                    self._features[name] = output
+
+                return hook
+
+            for name in feature_nodes:
+                module_dict[name].register_forward_hook(make_hook(name))
+
+        def forward(self, x: torch.Tensor) -> Dict[str, torch.Tensor]:
+            self._features = {}
+            _ = self.model(x)
+            return self._features
+
     def __init__(
         self,
         model: str,
@@ -130,6 +168,18 @@ class TimmExtractor(nn.Module):
 
         model = TimmExtractor._create_model(model_name, pretrained, checkpoint_path, model_kwargs)
 
+        # Number of prefix tokens (e.g. CLS + possible register tokens) for ViT models.
+        # For standard ViTs this is 1 (CLS token). Newer variants like DINOv3 may use
+        # additional register tokens, and expose the total via `num_prefix_tokens`.
+        if self.is_vit:
+            num_prefix_tokens = getattr(model, "num_prefix_tokens", None)
+            if num_prefix_tokens is None:
+                # Older timm versions may not have `num_prefix_tokens`, but do have CLS.
+                num_prefix_tokens = 1
+            self._num_prefix_tokens = int(num_prefix_tokens)
+        else:
+            self._num_prefix_tokens = 0
+
         if self.features is not None:
             nodes = torchvision.models.feature_extraction.get_graph_node_names(model)[0]
 
@@ -146,7 +196,14 @@ class TimmExtractor(nn.Module):
 
                 features.append(name)
 
-            model = torchvision.models.feature_extraction.create_feature_extractor(model, features)
+            # For most models we can rely on torchvision's FX-based feature extractor.
+            # However, some newer ViT variants (e.g. DINOv3) exhibit device mismatch
+            # issues due to FX-managed constant tensors living on CPU. For those, fall
+            # back to a simple hook-based extractor instead.
+            if self.is_vit and "dinov3" in model_name:
+                model = TimmExtractor._ViTHookFeatureExtractor(model, features)
+            else:
+                model = torchvision.models.feature_extraction.create_feature_extractor(model, features)
 
         self.model = model
 
@@ -194,8 +251,9 @@ class TimmExtractor(nn.Module):
             outputs = self.model(inp)
 
         if self.features is not None:
-            if self.is_vit:
-                outputs = {k: v[:, 1:] for k, v in outputs.items()}  # Remove CLS token
+            if self.is_vit and self._num_prefix_tokens > 0:
+                # Drop all prefix tokens (CLS + possible register tokens) and keep only patch tokens.
+                outputs = {k: v[:, self._num_prefix_tokens :] for k, v in outputs.items()}
             outputs = {self.FEATURE_MAPPING[key]: value for key, value in outputs.items()}
             for name in self.features:
                 if ("keys" in name) or ("queries" in name) or ("values" in name):
