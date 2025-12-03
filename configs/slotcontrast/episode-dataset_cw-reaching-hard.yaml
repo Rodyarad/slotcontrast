@@ -2,9 +2,9 @@ experiment_group: slotcontrast
 experiment_name: cw-reaching-hard
 
 globals:
-  NUM_SLOTS: 10
-  SLOT_DIM: 128
-  DINO_MODEL: vit_small_patch16_dinov3 #vit_small_patch16_dinov2
+  NUM_SLOTS: 6
+  SLOT_DIM: 64
+  DINO_MODEL: vit_small_patch16_dinov3 #vit_small_patch14_dinov2
   FEAT_DIM: 384
   NUM_PATCHES: 441 #576
   NUM_GPUS: 1
@@ -48,7 +48,7 @@ model:
 
   loss_weights:
     loss_featrec: 1.0
-    loss_ss: 0.5
+    loss_ss: 0.0
 
   initializer:
     name: FixedLearnedInit
