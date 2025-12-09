@@ -30,7 +30,7 @@ optimizer:
 
 model:
   input_type: video
-  masks_to_visualize: ["decoder", "dynamics_predictor"]
+  masks_to_visualize: ["decoder_masks", "dynamics_predictor_masks"]
   load_weights: "checkpoints/cw_slot_contrast_best_dinov2.ckpt"
   modules_to_load:
     initializer: initializer
