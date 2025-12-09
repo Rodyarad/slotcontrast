@@ -8,7 +8,7 @@ from slotcontrast.modules.networks import build as build_network
 from slotcontrast.modules.utils import Resizer, SoftToHardMask
 from slotcontrast.modules.utils import build as build_utils
 from slotcontrast.modules.utils import build_module, build_torch_function, build_torch_module
-from slotcontrast.modules.video import LatentProcessor, MapOverTime, ScanOverTime
+from slotcontrast.modules.video import ActionLatentProcessor, ActionScanOverTime, LatentProcessor, MapOverTime, ScanOverTime
 from slotcontrast.modules.video import build as build_video
 
 __all__ = [
@@ -26,6 +26,8 @@ __all__ = [
     "MapOverTime",
     "ScanOverTime",
     "LatentProcessor",
+    "ActionLatentProcessor",
+    "ActionScanOverTime",
     "Resizer",
     "SoftToHardMask",
 ]

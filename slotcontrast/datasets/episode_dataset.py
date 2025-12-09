@@ -11,10 +11,19 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 
 class EpisodesDataset(Dataset):
-    def __init__(self, root, mode, transforms=None, extension='png', kind='video', sequence_length=1):
-        assert mode in ['train', 'val', 'valid', 'test']
-        if mode in ('valid', 'test'):
-            mode = 'val'
+    def __init__(
+        self,
+        root,
+        mode,
+        transforms=None,
+        extension="png",
+        kind="video",
+        sequence_length=1,
+        use_actions: bool = False,
+    ):
+        assert mode in ["train", "val", "valid", "test"]
+        if mode in ("valid", "test"):
+            mode = "val"
 
         assert kind in ('image', 'video'), f'Expected kind: image or video. Actual: {kind}'
         if kind == 'image':
@@ -23,6 +32,7 @@ class EpisodesDataset(Dataset):
         self.kind = kind
         self.sequence_length = sequence_length
         self.transforms = transforms
+        self.use_actions = use_actions
 
         root = os.path.join(root, mode)
         root_with_obs = os.path.join(root, 'obs')
@@ -51,6 +61,7 @@ class EpisodesDataset(Dataset):
         self.folders.sort(key=get_num)
 
         self.episode_images = []
+        self.episode_actions = [] if self.use_actions else None
         self.episode2offset = [0]
         self.index2episode = []
         for i, f in enumerate(self.folders):
@@ -63,7 +74,15 @@ class EpisodesDataset(Dataset):
             self.index2episode.extend([len(self.episode_images) - 1] * actual_length)
             self.episode2offset.append(self.episode2offset[-1] + actual_length)
 
-        print(f'Dataset indexing took {time.time() - start} seconds')
+            if self.use_actions:
+                actions_path = osp.join(dir_name, "actions.npy")
+                if osp.isfile(actions_path):
+                    actions = np.load(actions_path)
+                else:
+                    actions = None
+                self.episode_actions.append(actions)
+
+        print(f"Dataset indexing took {time.time() - start} seconds")
 
     def __getitem__(self, index):
         if self.kind == 'video':
@@ -75,7 +94,18 @@ class EpisodesDataset(Dataset):
                 image_sequence.append(img)
 
             data = np.stack(image_sequence)
-        elif self.kind == 'image':
+            actions = None
+            if self.use_actions and self.episode_actions is not None:
+                episode_actions = self.episode_actions[index]
+                if episode_actions is not None:
+                    # actions.npy has shape (T, dim_actions); align with chosen window
+                    # If actions are per transition, we take actions[start_index:start_index+sequence_length]
+                    # and rely on the user to ensure consistency with frames.
+                    t_actions = episode_actions.shape[0]
+                    end_index = start_index + self.sequence_length
+                    end_index = min(end_index, t_actions)
+                    actions = episode_actions[start_index:end_index]
+        elif self.kind == "image":
             ep = self.index2episode[index]
             # Implement continuous indexing
             offset = self.episode2offset[ep]
@@ -84,7 +114,9 @@ class EpisodesDataset(Dataset):
         else:
             assert False, 'Cannot happen!'
 
-        data = {'__key__': str(index), self.kind: data}
+        data = {"__key__": str(index), self.kind: data}
+        if self.kind == "video" and self.use_actions and actions is not None:
+            data["actions"] = actions
 
         if self.transforms:
             for name, transform in self.transforms.items():

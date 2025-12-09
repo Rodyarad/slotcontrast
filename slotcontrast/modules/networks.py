@@ -697,6 +697,269 @@ class TransformerEncoder(nn.Module):
         return x
 
 
+class CompasParLayer(nn.Module):
+    """Parallel object- and time-attention layer with optional action attention.
+
+    This is a simplified version of the CompasParLayer from compas_2.py:
+    - Expects inputs of shape [B, T, N_slots, dim].
+    - Applies attention along slots (object-attention) and along time (time-attention).
+    - Optionally conditions on actions via a separate attention branch.
+    """
+
+    def __init__(
+        self,
+        d_model: int,
+        nhead: int,
+        dim_feedforward: int = 2048,
+        dropout: float = 0.1,
+        layer_norm_eps: float = 1e-5,
+        batch_first: bool = True,
+        norm_first: bool = True,
+        use_actions: bool = True,
+        use_slot_temporal_block: bool = True,
+        use_slot_interaction_block: bool = True,
+    ):
+        super().__init__()
+        assert batch_first, "CompasParLayer assumes batch_first=True"
+        self.use_actions = use_actions
+        self.use_slot_temporal_block = use_slot_temporal_block
+        self.use_slot_interaction_block = use_slot_interaction_block
+
+        factory_kwargs = {}
+
+        # Object-attention: attends over slots for each time step independently
+        self.self_attn_obj = nn.MultiheadAttention(
+            embed_dim=d_model,
+            num_heads=nhead,
+            dropout=dropout,
+            batch_first=batch_first,
+            **factory_kwargs,
+        )
+
+        # Time-attention: attends over time for each slot independently
+        self.self_attn_time = nn.MultiheadAttention(
+            embed_dim=d_model,
+            num_heads=nhead,
+            dropout=dropout,
+            batch_first=batch_first,
+            **factory_kwargs,
+        )
+
+        # Action-attention: attends from slots to action tokens
+        self.act_attn = nn.MultiheadAttention(
+            embed_dim=d_model,
+            num_heads=nhead,
+            dropout=dropout,
+            batch_first=batch_first,
+            **factory_kwargs,
+        )
+
+        self.act_norm = nn.LayerNorm(d_model, eps=layer_norm_eps)
+
+        # Feedforward as in standard TransformerEncoderLayer
+        self.linear1 = nn.Linear(d_model, dim_feedforward)
+        self.dropout = nn.Dropout(dropout)
+        self.linear2 = nn.Linear(dim_feedforward, d_model)
+
+        self.norm1 = nn.LayerNorm(d_model, eps=layer_norm_eps)
+        self.norm2 = nn.LayerNorm(d_model, eps=layer_norm_eps)
+        self.dropout1 = nn.Dropout(dropout)
+        self.dropout2 = nn.Dropout(dropout)
+
+        self.activation = F.relu
+        self.norm_first = norm_first
+
+    def gen_act_causal_mask(self, slots: torch.Tensor) -> torch.Tensor:
+        # slots: [B, T, N, D]
+        time_steps = slots.size(1)
+        num_slots = slots.size(2)
+        # Standard subsequent mask over time
+        slots_mask = torch.triu(
+            torch.full((time_steps, time_steps), float("-inf"), device=slots.device),
+            diagonal=1,
+        )
+        # Repeat over slots in batch dimension for multihead attention
+        slots_mask = slots_mask.repeat_interleave(num_slots, 0)
+        return slots_mask
+
+    def _ff_block(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.linear2(self.dropout(self.activation(self.linear1(x))))
+        return x
+
+    def _sa_block(self, x: torch.Tensor, action: Optional[torch.Tensor], time_mask: Optional[torch.Tensor]):
+        """Parallel attention over objects, time and actions."""
+        B, num_imgs, num_slots, dim = x.shape
+
+        # object-attention over slots
+        if self.use_slot_interaction_block:
+            x_aux = x.reshape(B * num_imgs, num_slots, dim)
+            x_obj = self.self_attn_obj(
+                query=x_aux,
+                key=x_aux,
+                value=x_aux,
+                need_weights=False,
+            )[0]
+            x_obj = x_obj.view(B, num_imgs, num_slots, dim)
+        else:
+            x_obj = 0
+
+        # action-attention over action tokens
+        if self.use_actions and action is not None:
+            # action: [B, T, D]
+            attn_mask = self.gen_act_causal_mask(x)
+            x_aux = x.reshape(B, num_imgs * num_slots, dim)
+            x_act = self.act_attn(
+                query=x_aux,
+                key=self.act_norm(action),
+                value=self.act_norm(action),
+                attn_mask=attn_mask,
+                need_weights=False,
+            )[0]
+            x_act = x_act.view(B, num_imgs, num_slots, dim)
+        else:
+            x_act = 0
+
+        # time-attention over frames
+        if self.use_slot_temporal_block:
+            x_time = x.transpose(1, 2).reshape(B * num_slots, num_imgs, dim)
+            x_time = self.self_attn_time(
+                query=x_time,
+                key=x_time,
+                value=x_time,
+                attn_mask=time_mask,
+                need_weights=False,
+            )[0]
+            x_time = x_time.view(B, num_slots, num_imgs, dim).transpose(1, 2)
+        else:
+            x_time = 0
+
+        y = self.dropout1(x_obj + x_time + x_act)
+        return y
+
+    def forward(
+        self,
+        src: torch.Tensor,
+        action: Optional[torch.Tensor],
+        time_mask: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        # src: [B, T, N, D], action: [B, T, D_a] projected to D elsewhere
+        x = src
+        if self.norm_first:
+            x = x + self._sa_block(self.norm1(x), action, time_mask)
+            x = x + self._ff_block(self.norm2(x))
+        else:
+            x = self.norm1(x + self._sa_block(x, action, time_mask))
+            x = self.norm2(x + self._ff_block(x))
+
+        return x
+
+
+class CompasDynamicsPredictor(nn.Module):
+    """Compas-like dynamics predictor operating on slot sequences and actions.
+
+    Expects:
+      - slots: [B, T, N_slots, slots_dim]
+      - actions: [B, T, action_dim]
+    Returns:
+      - next_slots: [B, N_slots, slots_dim] (prediction for next time step).
+    """
+
+    def __init__(
+        self,
+        num_slots: int,
+        slots_dim: int,
+        tokens_dim: int,
+        max_timestep: int,
+        action_dim: int,
+        num_heads: int = 4,
+        num_layers: int = 1,
+        hidden_mult: int = 4,
+        parallel: bool = True,
+        use_time_encoding: bool = True,
+        use_actions: bool = True,
+        use_slot_temporal_block: bool = True,
+        use_slot_interaction_block: bool = True,
+    ):
+        super().__init__()
+        self.num_slots = num_slots
+        self.slots_dim = slots_dim
+        self.tokens_dim = tokens_dim
+        self.max_timestep = max_timestep
+        self.num_heads = num_heads
+        self.num_layers = num_layers
+        self.hidden_mult = hidden_mult
+        self.use_time_encoding = use_time_encoding
+        self.use_actions = use_actions
+        self.use_slot_temporal_block = use_slot_temporal_block
+        self.use_slot_interaction_block = use_slot_interaction_block
+
+        self.in_proj = nn.Linear(slots_dim, tokens_dim, bias=False)
+        self.act_proj = nn.Linear(action_dim, tokens_dim, bias=False)
+
+        dim_feedforward = tokens_dim * hidden_mult
+        self.blocks = nn.ModuleList(
+            [
+                CompasParLayer(
+                    d_model=tokens_dim,
+                    nhead=num_heads,
+                    batch_first=True,
+                    norm_first=True,
+                    dim_feedforward=dim_feedforward,
+                    dropout=0.1,
+                    use_actions=use_actions,
+                    use_slot_temporal_block=use_slot_temporal_block,
+                    use_slot_interaction_block=use_slot_interaction_block,
+                )
+                for _ in range(num_layers)
+            ]
+        )
+
+        if use_time_encoding:
+            # Registered as buffer so that it moves with the module across devices
+            pe = _get_sinusoidal_pos_encoding(max_timestep, tokens_dim)
+            self.register_buffer("time_pos_encoding", pe, persistent=False)
+        else:
+            self.time_pos_encoding = None
+
+        self.mlp_out = nn.Linear(tokens_dim, slots_dim)
+
+    def forward(self, slots: torch.Tensor, actions: torch.Tensor) -> torch.Tensor:
+        """Predict next slots given a context of past slots and actions.
+
+        Args:
+            slots: [B, T, N_slots, slots_dim]
+            actions: [B, T, action_dim]
+        """
+        B, T, N, _ = slots.shape
+
+        # Limit temporal context to max_timestep
+        if T > self.max_timestep:
+            slots = slots[:, -self.max_timestep :]
+            actions = actions[:, -self.max_timestep :]
+            T = self.max_timestep
+
+        # Project slots and actions to common tokens_dim
+        slots_tokens = self.in_proj(slots)  # [B, T, N, tokens_dim]
+        actions_tokens = self.act_proj(actions)  # [B, T, tokens_dim]
+
+        if self.use_time_encoding and self.time_pos_encoding is not None:
+            time_enc = self.time_pos_encoding[-T:]  # [T, D]
+            slots_tokens = slots_tokens + time_enc.view(1, T, 1, -1)
+            actions_tokens = actions_tokens + time_enc.view(1, T, -1)
+
+        time_mask = None  # could add causal mask over time if desired
+
+        x = slots_tokens
+        for block in self.blocks:
+            x = block(x, actions_tokens, time_mask=time_mask)
+
+        # Residual connection in slot space
+        slots_delta = self.mlp_out(x)  # [B, T, N, slots_dim]
+        updated_slots = slots + slots_delta
+        # Return prediction for next step: use last time index
+        return updated_slots[:, -1]
+
+
 class TransformerDecoderLayer(nn.TransformerDecoderLayer):
     """Like torch.nn.TransformerDecoderLayer, but with customizations."""
 

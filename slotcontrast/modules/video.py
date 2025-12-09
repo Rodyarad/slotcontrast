@@ -62,6 +62,91 @@ class LatentProcessor(nn.Module):
         }
 
 
+class ActionLatentProcessor(nn.Module):
+    """Latent processor that incorporates actions and temporal context via a dynamics predictor.
+
+    This module assumes that the wrapped dynamics `predictor` takes a window of past slot states
+    and corresponding actions and returns the next slot state.
+    """
+
+    def __init__(
+        self,
+        corrector: nn.Module,
+        predictor: Optional[nn.Module] = None,
+        state_key: str = "slots",
+        first_step_corrector_args: Optional[Dict[str, Any]] = None,
+        max_timestep: Optional[int] = None,
+    ):
+        super().__init__()
+        self.corrector = corrector
+        self.predictor = predictor
+        self.state_key = state_key
+        self.max_timestep = max_timestep
+        if first_step_corrector_args is not None:
+            self.first_step_corrector_args = first_step_corrector_args
+        else:
+            self.first_step_corrector_args = None
+
+        # Internal buffers for temporal context (filled by wrapper that steps over time).
+        self._slot_history = None
+        self._action_history = None
+
+    def reset_history(self):
+        self._slot_history = None
+        self._action_history = None
+
+    def forward(
+        self,
+        state: torch.Tensor,
+        inputs: Optional[torch.Tensor],
+        time_step: Optional[int] = None,
+        actions: Optional[torch.Tensor] = None,
+    ) -> Dict[str, torch.Tensor]:
+        # state: batch x n_slots x slot_dim
+        assert state.ndim == 3
+        # inputs: batch x n_inputs x input_dim
+        if inputs is not None:
+            assert inputs.ndim == 3
+
+        # Correct current state using inputs (SlotAttention-like corrector)
+        if inputs is not None:
+            if time_step == 0 and self.first_step_corrector_args:
+                corrector_output = self.corrector(state, inputs, **self.first_step_corrector_args)
+            else:
+                corrector_output = self.corrector(state, inputs)
+            updated_state = corrector_output[self.state_key]
+        else:
+            corrector_output = None
+            updated_state = state
+
+        # Update histories
+        if self._slot_history is None:
+            self._slot_history = updated_state.unsqueeze(1)  # [B, 1, N_slots, D]
+        else:
+            self._slot_history = torch.cat([self._slot_history, updated_state.unsqueeze(1)], dim=1)
+
+        if actions is not None:
+            if self._action_history is None:
+                self._action_history = actions.unsqueeze(1)  # [B, 1, A_dim]
+            else:
+                self._action_history = torch.cat([self._action_history, actions.unsqueeze(1)], dim=1)
+
+        predicted_state = updated_state
+        if self.predictor is not None and self._action_history is not None:
+            slots_seq = self._slot_history
+            actions_seq = self._action_history
+            if self.max_timestep is not None:
+                slots_seq = slots_seq[:, -self.max_timestep :]
+                actions_seq = actions_seq[:, -self.max_timestep :]
+            predicted_state = self.predictor(slots_seq, actions_seq)
+
+        return {
+            "state": updated_state,
+            "state_predicted": predicted_state,
+            "corrector": corrector_output,
+        }
+
+
 class MapOverTime(nn.Module):
     """Wrapper applying wrapped module independently to each time step.
 
@@ -129,6 +214,51 @@ class ScanOverTime(nn.Module):
                 output = self.module(state, inputs[:, t], t)
             else:
                 output = self.module(state, inputs[:, t])
+            outputs.append(output)
+            state = output[self.next_state_key]
+
+        return merge_dict_trees(outputs, axis=1)
+
+
+class ActionScanOverTime(nn.Module):
+    """Wrapper applying an action-aware module recurrently over time steps.
+
+    Expects:
+      - initial_state: [B, N_slots, D]
+      - inputs: [B, T, ...] (encoder features)
+      - actions: [B, T, A_dim]
+    """
+
+    def __init__(
+        self, module: nn.Module, next_state_key: str = "state_predicted", pass_step: bool = True
+    ) -> None:
+        super().__init__()
+        self.module = module
+        self.next_state_key = next_state_key
+        self.pass_step = pass_step
+
+    def forward(
+        self,
+        initial_state: torch.Tensor,
+        inputs: torch.Tensor,
+        actions: Optional[torch.Tensor] = None,
+    ):
+        # initial_state: batch x ...
+        # inputs: batch x n_frames x ...
+        seq_len = inputs.shape[1]
+
+        state = initial_state
+        outputs = []
+        # Reset any internal history before scan
+        if hasattr(self.module, "reset_history"):
+            self.module.reset_history()
+
+        for t in range(seq_len):
+            cur_actions = actions[:, t] if actions is not None else None
+            if self.pass_step:
+                output = self.module(state, inputs[:, t], t, actions=cur_actions)
+            else:
+                output = self.module(state, inputs[:, t], actions=cur_actions)
             outputs.append(output)
             state = output[self.next_state_key]
 

@@ -644,6 +644,9 @@ class EpisodesDataModule(pl.LightningDataModule):
         self.num_workers = num_workers
         self.train_transforms = train_transforms
         self.val_transforms = val_transforms
+        # If actions are present in the episode folders (`actions.npy`), enable parsing them.
+        # This can later be exposed via config if needed.
+        self.use_actions = getattr(self, "use_actions", True)
         self.train_set = None
         self.val_set = None
 
@@ -658,10 +661,24 @@ class EpisodesDataModule(pl.LightningDataModule):
         return "\n".join(res)
 
     def setup(self, stage):
-        self.train_set = EpisodesDataset(self.root, 'train', self.train_transforms, self.extension, 'video',
-                                         self.sequence_length)
-        self.val_set = EpisodesDataset(self.root, 'val', self.val_transforms, self.extension, 'video',
-                                       self.sequence_length)
+        self.train_set = EpisodesDataset(
+            self.root,
+            "train",
+            self.train_transforms,
+            self.extension,
+            "video",
+            self.sequence_length,
+            use_actions=self.use_actions,
+        )
+        self.val_set = EpisodesDataset(
+            self.root,
+            "val",
+            self.val_transforms,
+            self.extension,
+            "video",
+            self.sequence_length,
+            use_actions=self.use_actions,
+        )
 
     def train_dataloader(self):
         return torch.utils.data.DataLoader(self.train_set, batch_size=self.train_batch_size, num_workers=self.num_workers,

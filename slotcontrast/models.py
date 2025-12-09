@@ -51,16 +51,33 @@ def build(
             predictor = modules.build_module(model_config.predictor)
         else:
             predictor = None
+
         if model_config.latent_processor:
-            processor = modules.build_video(
-                model_config.latent_processor,
-                "LatentProcessor",
-                corrector=grouper,
-                predictor=predictor,
-            )
+            # Allow configuring whether to use action-aware latent processor
+            lp_config = dict(model_config.latent_processor)
+            use_actions = lp_config.get("use_actions", False)
+            first_step_args = lp_config.get("first_step_corrector_args", None)
+            if use_actions and predictor is not None:
+                max_timestep = lp_config.get("max_timestep", None)
+                processor_core = modules.ActionLatentProcessor(
+                    corrector=grouper,
+                    predictor=predictor,
+                    state_key="slots",
+                    first_step_corrector_args=first_step_args,
+                    max_timestep=max_timestep,
+                )
+                processor = modules.ActionScanOverTime(processor_core)
+            else:
+                processor = modules.build_video(
+                    model_config.latent_processor,
+                    "LatentProcessor",
+                    corrector=grouper,
+                    predictor=predictor,
+                )
+                processor = modules.ScanOverTime(processor)
         else:
             processor = modules.LatentProcessor(grouper, predictor)
-        processor = modules.ScanOverTime(processor)
+            processor = modules.ScanOverTime(processor)
     else:
         raise ValueError(f"Unknown input type {input_type}")
 
