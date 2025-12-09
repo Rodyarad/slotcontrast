@@ -4,7 +4,6 @@ experiment_name: cw-reaching-hard_slotformer
 globals:
   NUM_SLOTS: 6
   SLOT_DIM: 64
-  # Number of history frames for SlotFormer
   BI_FRAMES: 1
   DINO_MODEL: vit_small_patch14_dinov2
   FEAT_DIM: 384
@@ -23,6 +22,9 @@ trainer:
 optimizer:
   name: Adam
   lr: 0.0004
+  param_groups:
+    - modules: dynamics_predictor
+      lr: 0.0004
   lr_scheduler:
     name: exp_decay_with_warmup
     warmup_steps: 2500
@@ -41,26 +43,12 @@ model:
   visualization_size: [128, 128]
   visualize_every_n_steps: 99999999999
   losses:
-    loss_featrec:
-      name: MSELoss
-      pred_dims:
-        - 0
-        - ${globals.FEAT_DIM}
-    loss_ss:
-      name: Slot_Slot_Contrastive_Loss
-      pred_key: processor.state
-      temperature: 0.1
-      batch_contrast: true
-      patch_inputs: false
-      keep_input_dim: true
     loss_dynamics:
       name: DynamicsLoss
       pred_key: dynamics_predictor.next_state
       target_key: processor.state
 
   loss_weights:
-    loss_featrec: 0.0
-    loss_ss: 0.0
     loss_dynamics: 1.0
 
   initializer:
