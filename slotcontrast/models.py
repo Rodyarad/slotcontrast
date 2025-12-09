@@ -566,9 +566,14 @@ class ObjectCentricModel(pl.LightningModule):
                 if self.input_key == "video":
                     b, f, n_obj, H, W = masks.shape
                     n_examples = min(n_examples, b)
+                    # Use rollout-aligned video for dynamics predictor masks; their time dim can be shorter
+                    if "dynamics_predictor" in mask_key and video.shape[1] != f:
+                        video_to_use = video[:, -f:]
+                    else:
+                        video_to_use = video
                     for i in range(n_examples):
                         if mix_with_source:
-                            masks_video = visualizations.masks_on_video(video[i], masks[i]).movedim(0, 1)
+                            masks_video = visualizations.masks_on_video(video_to_use[i], masks[i]).movedim(0, 1)
                         else:
                             masks_video = masks[i].permute(1, 0, 2, 3)
                             masks_video = 1 - masks_video.reshape(n_obj, f, 1, H, W)

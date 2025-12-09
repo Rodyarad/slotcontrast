@@ -37,8 +37,9 @@ model:
     processor: processor
     encoder: encoder
     decoder: decoder
-  visualize: false
-  visualize_every_n_steps: 10000
+  visualize: true
+  visualization_size: [128, 128]
+  visualize_every_n_steps: 99999999999
   losses:
     loss_featrec:
       name: MSELoss
