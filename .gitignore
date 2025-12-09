@@ -166,5 +166,5 @@ logs/
 lightning_logs/
 
 .idea/
-
+checkpoints/
 test.sh

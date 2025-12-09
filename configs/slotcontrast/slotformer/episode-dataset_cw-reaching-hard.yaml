@@ -1,9 +1,11 @@
-experiment_group: slotcontrast
-experiment_name: cw-reaching-hard
+experiment_group: slotcontrast_slotformer
+experiment_name: cw-reaching-hard_slotformer
 
 globals:
   NUM_SLOTS: 6
   SLOT_DIM: 64
+  # Number of history frames for SlotFormer
+  BI_FRAMES: 1
   DINO_MODEL: vit_small_patch14_dinov2
   FEAT_DIM: 384
   NUM_PATCHES: 576
@@ -28,10 +30,15 @@ optimizer:
 
 model:
   input_type: video
-  visualize: true
-  visualize_every_n_steps: 99999999999
-  visualization_size: [128, 128]
-  masks_to_visualize: [decoder_masks,decoder_masks_vis_hard,grouping_masks,grouping_masks_vis_hard]
+  masks_to_visualize: ["decoder", "dynamics_predictor"]
+  load_weights: "checkpoints/cw_slot_contrast_best_dinov2.ckpt"
+  modules_to_load:
+    initializer: initializer
+    processor: processor
+    encoder: encoder
+    decoder: decoder
+  visualize: false
+  visualize_every_n_steps: 10000
   losses:
     loss_featrec:
       name: MSELoss
@@ -45,10 +52,15 @@ model:
       batch_contrast: true
       patch_inputs: false
       keep_input_dim: true
+    loss_dynamics:
+      name: DynamicsLoss
+      pred_key: dynamics_predictor.next_state
+      target_key: processor.state
 
   loss_weights:
-    loss_featrec: 1.0
+    loss_featrec: 0.0
     loss_ss: 0.0
+    loss_dynamics: 1.0
 
   initializer:
     name: FixedLearnedInit
@@ -96,6 +108,16 @@ model:
     dim: ${globals.SLOT_DIM}
     n_blocks: 1
     n_heads: 4
+
+  dynamics_predictor:
+    name: SlotFormer
+    num_slots: ${globals.NUM_SLOTS}
+    slot_size: ${globals.SLOT_DIM}
+    history_len: ${globals.BI_FRAMES}
+    t_pe: "sin"
+    d_model: "${mul: ${globals.SLOT_DIM}, 2}"
+    ffn_dim: "${mul: ${globals.SLOT_DIM}, 8}"
+    num_layers: 1
 
 dataset:
   name: EpisodesDataModule
