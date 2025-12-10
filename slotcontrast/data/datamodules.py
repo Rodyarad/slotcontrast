@@ -17,7 +17,12 @@ from slotcontrast.data.utils import get_data_root_dir, worker_init_function
 from slotcontrast.utils import config_as_kwargs
 
 
-def build(config, name: Optional[str] = "WebdatasetDataModule", data_dir: Optional[str] = None):
+def build(
+    config,
+    name: Optional[str] = "WebdatasetDataModule",
+    data_dir: Optional[str] = None,
+    use_actions: Optional[bool] = None,
+):
     name = config.get("name") or name
     if name == "WebdatasetDataModule":
         train_pipeline = None
@@ -47,16 +52,19 @@ def build(config, name: Optional[str] = "WebdatasetDataModule", data_dir: Option
             ),
         )
     elif name == "EpisodesDataModule":
+        kwargs = config_as_kwargs(
+            config,
+            to_filter=(
+                "train_transforms",
+                "val_transforms",
+            ),
+        )
+        if use_actions is not None:
+            kwargs["use_actions"] = use_actions
         return EpisodesDataModule(
             train_transforms=transforms.build(config.train_transforms),
             val_transforms=transforms.build(config.val_transforms),
-            **config_as_kwargs(
-                config,
-                to_filter=(
-                    "train_transforms",
-                    "val_transforms",
-                ),
-            ),
+            **kwargs,
         )
     else:
         raise ValueError(f"Unknown dataset module `{name}`")
@@ -632,6 +640,7 @@ class EpisodesDataModule(pl.LightningDataModule):
         train_batch_size: int,
         val_batch_size: int,
         num_workers: int,
+        use_actions: Optional[bool] = None,
         train_transforms: Optional[Callable] = None,
         val_transforms: Optional[Callable] = None,
     ):
@@ -644,9 +653,7 @@ class EpisodesDataModule(pl.LightningDataModule):
         self.num_workers = num_workers
         self.train_transforms = train_transforms
         self.val_transforms = val_transforms
-        # If actions are present in the episode folders (`actions.npy`), enable parsing them.
-        # This can later be exposed via config if needed.
-        self.use_actions = getattr(self, "use_actions", True)
+        self.use_actions = use_actions if use_actions is not None else False
         self.train_set = None
         self.val_set = None
 
@@ -658,6 +665,7 @@ class EpisodesDataModule(pl.LightningDataModule):
         res.append(f"  - Train batch size: {self.train_batch_size}")
         res.append(f"  - Val batch size: {self.val_batch_size}")
         res.append(f"  - Num workers: {self.num_workers}")
+        res.append(f"  - Use actions: {self.use_actions}")
         return "\n".join(res)
 
     def setup(self, stage):

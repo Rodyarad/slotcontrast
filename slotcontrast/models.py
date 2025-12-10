@@ -278,9 +278,12 @@ class ObjectCentricModel(pl.LightningModule):
 
         encoder_output = self.encoder(encoder_input)
         features = encoder_output["features"]
-
         slots_initial = self.initializer(batch_size=batch_size)
-        processor_output = self.processor(slots_initial, features)
+        if isinstance(self.processor, modules.ActionScanOverTime):
+            actions = inputs.get("actions", None)
+            processor_output = self.processor(slots_initial, features, actions=actions)
+        else:
+            processor_output = self.processor(slots_initial, features)
         slots = processor_output["state"]
         decoder_output = self.decoder(slots)
 

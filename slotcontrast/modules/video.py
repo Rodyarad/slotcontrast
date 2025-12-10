@@ -249,16 +249,14 @@ class ActionScanOverTime(nn.Module):
 
         state = initial_state
         outputs = []
-        # Reset any internal history before scan
-        if hasattr(self.module, "reset_history"):
-            self.module.reset_history()
+
+        self.module.reset_history()
 
         for t in range(seq_len):
-            cur_actions = actions[:, t] if actions is not None else None
             if self.pass_step:
-                output = self.module(state, inputs[:, t], t, actions=cur_actions)
+                output = self.module(state, inputs[:, t], t, actions[:, t])
             else:
-                output = self.module(state, inputs[:, t], actions=cur_actions)
+                output = self.module(state, inputs[:, t], actions[:, t])
             outputs.append(output)
             state = output[self.next_state_key]
 

@@ -450,6 +450,14 @@ class LearnedPositionEmbed(nn.Module):
 
         return x
 
+def get_sin_pos_enc(seq_len: int, d_model: int) -> torch.Tensor:
+    """Sinusoid absolute positional encoding."""
+    inv_freq = 1. / (10000 ** (torch.arange(0.0, d_model, 2.0) / d_model))
+    pos_seq = torch.arange(seq_len - 1, -1, -1).type_as(inv_freq)
+    sinusoid_inp = torch.outer(pos_seq, inv_freq)
+    pos_emb = torch.cat([sinusoid_inp.sin(), sinusoid_inp.cos()], dim=-1)
+    return pos_emb.unsqueeze(0)  # [1, L, C]
+
 
 class FeatureSimilarity:
     """Compute dot-product based similarity between two sets of features.

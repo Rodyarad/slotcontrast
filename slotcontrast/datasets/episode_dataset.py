@@ -82,7 +82,7 @@ class EpisodesDataset(Dataset):
                     actions = None
                 self.episode_actions.append(actions)
 
-        print(f"Dataset indexing took {time.time() - start} seconds")
+        print(f'Dataset indexing took {time.time() - start} seconds')
 
     def __getitem__(self, index):
         if self.kind == 'video':
@@ -95,16 +95,17 @@ class EpisodesDataset(Dataset):
 
             data = np.stack(image_sequence)
             actions = None
-            if self.use_actions and self.episode_actions is not None:
+            if self.use_actions:
                 episode_actions = self.episode_actions[index]
-                if episode_actions is not None:
-                    # actions.npy has shape (T, dim_actions); align with chosen window
-                    # If actions are per transition, we take actions[start_index:start_index+sequence_length]
-                    # and rely on the user to ensure consistency with frames.
-                    t_actions = episode_actions.shape[0]
-                    end_index = start_index + self.sequence_length
-                    end_index = min(end_index, t_actions)
-                    actions = episode_actions[start_index:end_index]
+                t_actions, action_dim = episode_actions.shape
+                # Actions are per transition: typically t_actions = n_frames - 1.
+                end_index = min(start_index + self.sequence_length, t_actions)
+                actions_slice = episode_actions[start_index:end_index]
+                if actions_slice.shape[0] < self.sequence_length:
+                    pad_len = self.sequence_length - actions_slice.shape[0]
+                    pad = np.zeros((pad_len, action_dim), dtype=episode_actions.dtype)
+                    actions_slice = np.concatenate([actions_slice, pad], axis=0)
+                actions = actions_slice
         elif self.kind == "image":
             ep = self.index2episode[index]
             # Implement continuous indexing
@@ -114,8 +115,9 @@ class EpisodesDataset(Dataset):
         else:
             assert False, 'Cannot happen!'
 
-        data = {"__key__": str(index), self.kind: data}
-        if self.kind == "video" and self.use_actions and actions is not None:
+        data = {'__key__': str(index), self.kind: data}
+
+        if self.kind == "video" and self.use_actions:
             data["actions"] = actions
 
         if self.transforms:
