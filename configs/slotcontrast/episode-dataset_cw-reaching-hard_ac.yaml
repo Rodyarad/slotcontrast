@@ -118,7 +118,7 @@ dataset:
   sequence_length: 4
   train_batch_size: ${globals.BATCH_SIZE_PER_GPU}
   val_batch_size: 16
-  num_workers: 0 #8
+  num_workers: 8
   use_actions: true
   train_transforms:
     name: episodes-dataset_train

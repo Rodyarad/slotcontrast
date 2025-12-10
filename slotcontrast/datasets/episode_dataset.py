@@ -102,8 +102,7 @@ class EpisodesDataset(Dataset):
                 end_index = min(start_index + self.sequence_length, t_actions)
                 actions_slice = episode_actions[start_index:end_index]
                 if actions_slice.shape[0] < self.sequence_length:
-                    pad_len = self.sequence_length - actions_slice.shape[0]
-                    pad = np.zeros((pad_len, action_dim), dtype=episode_actions.dtype)
+                    pad = np.zeros((1, action_dim), dtype=episode_actions.dtype)
                     actions_slice = np.concatenate([actions_slice, pad], axis=0)
                 actions = actions_slice
         elif self.kind == "image":
