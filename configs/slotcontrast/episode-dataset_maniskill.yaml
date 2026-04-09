@@ -1,5 +1,5 @@
 experiment_group: slotcontrast
-experiment_name: block_lifting
+experiment_name: vizdoom
 
 globals:
   NUM_SLOTS: 7
